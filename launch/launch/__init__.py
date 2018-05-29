@@ -12,71 +12,88 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from launch.exit_handler import default_exit_handler
-from launch.output_handler import CompositeOutputHandler
-from launch.output_handler import ConsoleOutput
+"""Main entry point for the `launch` package."""
+
+from . import actions
+from . import events
+from .launch_description import LaunchDescription
+from .launch_introspector import LaunchIntrospector
+from .launch_service import LaunchService
+
+__all__ = [
+    'actions',
+    'events',
+    'LaunchDescription',
+    'LaunchIntrospector',
+    'LaunchService',
+]
 
 
-class LaunchDescriptor:
-
-    def __init__(self):
-        self.task_descriptors = []
-
-    def add_coroutine(self, coroutine, name=None, exit_handler=None):
-        if name is not None and name in [p.name for p in self.task_descriptors]:
-            raise RuntimeError("Task name '%s' already used" % name)
-        if exit_handler is None:
-            exit_handler = default_exit_handler
-        coroutine_descriptor = CoroutineDescriptor(
-            coroutine, name, exit_handler)
-        self.task_descriptors.append(coroutine_descriptor)
-        return coroutine_descriptor
-
-    def add_process(self, cmd, name=None, env=None, output_handlers=None, exit_handler=None):
-        if name is not None and name in [p.name for p in self.task_descriptors]:
-            raise RuntimeError("Task name '%s' already used" % name)
-        if output_handlers is None:
-            output_handlers = [ConsoleOutput()]
-        output_handlers = CompositeOutputHandler(output_handlers)
-        if exit_handler is None:
-            exit_handler = default_exit_handler
-        process_descriptor = ProcessDescriptor(
-            cmd, name, output_handlers, exit_handler, env=env)
-        self.task_descriptors.append(process_descriptor)
-        return process_descriptor
+# from launch.exit_handler import default_exit_handler
+# from launch.output_handler import CompositeOutputHandler
+# from launch.output_handler import ConsoleOutput
 
 
-class TaskDescriptor:
+# class LaunchDescriptor:
 
-    def __init__(self):
-        self.task_state = None
+#     def __init__(self):
+#         self.task_descriptors = []
+
+#     def add_coroutine(self, coroutine, name=None, exit_handler=None):
+#         if name is not None and name in [p.name for p in self.task_descriptors]:
+#             raise RuntimeError("Task name '%s' already used" % name)
+#         if exit_handler is None:
+#             exit_handler = default_exit_handler
+#         coroutine_descriptor = CoroutineDescriptor(
+#             coroutine, name, exit_handler)
+#         self.task_descriptors.append(coroutine_descriptor)
+#         return coroutine_descriptor
+
+#     def add_process(self, cmd, name=None, env=None, output_handlers=None, exit_handler=None):
+#         if name is not None and name in [p.name for p in self.task_descriptors]:
+#             raise RuntimeError("Task name '%s' already used" % name)
+#         if output_handlers is None:
+#             output_handlers = [ConsoleOutput()]
+#         output_handlers = CompositeOutputHandler(output_handlers)
+#         if exit_handler is None:
+#             exit_handler = default_exit_handler
+#         process_descriptor = ProcessDescriptor(
+#             cmd, name, output_handlers, exit_handler, env=env)
+#         self.task_descriptors.append(process_descriptor)
+#         return process_descriptor
 
 
-class CoroutineDescriptor(TaskDescriptor):
+# class TaskDescriptor:
 
-    def __init__(self, coroutine, name, exit_handler):
-        super(CoroutineDescriptor, self).__init__()
-        self.coroutine = coroutine
-        self.name = name
-        self.exit_handler = exit_handler
+#     def __init__(self):
+#         self.task_state = None
 
 
-class ProcessDescriptor(TaskDescriptor):
+# class CoroutineDescriptor(TaskDescriptor):
 
-    def __init__(self, cmd, name, output_handler, exit_handler, env=None):
-        super(ProcessDescriptor, self).__init__()
-        self.cmd = cmd
-        self.name = name
-        self.output_handler = output_handler
-        self.exit_handler = exit_handler
-        self.env = env
-        self.transport = None
-        self.protocol = None
+#     def __init__(self, coroutine, name, exit_handler):
+#         super(CoroutineDescriptor, self).__init__()
+#         self.coroutine = coroutine
+#         self.name = name
+#         self.exit_handler = exit_handler
 
-    def send_signal(self, signal):
-        if self.transport:
-            self.transport.send_signal(signal)
 
-    def terminate(self):
-        if self.transport:
-            self.transport.terminate()
+# class ProcessDescriptor(TaskDescriptor):
+
+#     def __init__(self, cmd, name, output_handler, exit_handler, env=None):
+#         super(ProcessDescriptor, self).__init__()
+#         self.cmd = cmd
+#         self.name = name
+#         self.output_handler = output_handler
+#         self.exit_handler = exit_handler
+#         self.env = env
+#         self.transport = None
+#         self.protocol = None
+
+#     def send_signal(self, signal):
+#         if self.transport:
+#             self.transport.send_signal(signal)
+
+#     def terminate(self):
+#         if self.transport:
+#             self.transport.terminate()
