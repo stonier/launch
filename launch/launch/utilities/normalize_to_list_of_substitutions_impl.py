@@ -16,48 +16,27 @@
 
 from typing import Iterable
 from typing import List
-from typing import Text
-from typing import Union
-from typing import overload
+from typing import cast
 
 from .class_tools_impl import is_a_subclass
+from ..some_substitutions_type import SomeSubstitutionsType
 from ..substitution import Substitution
 from ..substitutions import TextSubstitution
 
 
-@overload
-def normalize_to_list_of_substitutions(subs: Text) -> List[Substitution]:
-    """Specialize for single Text input."""
-    ...
-
-
-@overload  # noqa: F811
-def normalize_to_list_of_substitutions(subs: Substitution) -> List[Substitution]:
-    """Specialize for single Substitution input."""
-    ...
-
-
-@overload  # noqa: F811
-def normalize_to_list_of_substitutions(
-    subs: Iterable[Union[Text, Substitution]]
-) -> List[Substitution]:
-    """Specialize for list of mixed Text and Substitution inputs."""
-    ...
-
-
-def normalize_to_list_of_substitutions(subs) -> List[Substitution]:  # noqa: F811
+def normalize_to_list_of_substitutions(subs: SomeSubstitutionsType) -> List[Substitution]:
     """Return a list of Substitutions given a variety of starting inputs."""
     def normalize(x):
         if isinstance(x, Substitution):
             return x
-        if isinstance(x, (str, bytes)):
+        if isinstance(x, str):
             return TextSubstitution(text=x)
         raise TypeError(
             "Failed to normalize given item of type '{}', when only "
             "'typing.Text' or 'launch.Substitution' were expected.".format(type(x)))
 
-    if isinstance(subs, (str, bytes)):
+    if isinstance(subs, str):
         return [TextSubstitution(text=subs)]
     if is_a_subclass(subs, Substitution):
-        return [subs]
-    return [normalize(y) for y in subs]
+        return [cast(Substitution, subs)]
+    return [normalize(y) for y in cast(Iterable, subs)]

@@ -14,18 +14,32 @@
 
 """Module for the ExecuteProcess action."""
 
+import asyncio
 import logging
+import os
+import shlex
+import signal
+import threading
+import traceback
+from typing import Any
 from typing import Dict
 from typing import Iterable
 from typing import List
 from typing import Optional
 from typing import Text
+from typing import cast
 
 from osrf_pycommon.process_utils import AsyncSubprocessProtocol
 from osrf_pycommon.process_utils import async_execute_process
 
+from .emit_event import EmitEvent
+from .opaque_function import OpaqueFunction
+from .timer_action import TimerAction
 from ..action import Action
+from ..event import Event
 from ..event_handler import EventHandler
+from ..event_handlers import OnShutdown
+from ..events import Shutdown
 from ..events.process import ProcessExited
 from ..events.process import ProcessStarted
 from ..events.process import ProcessStderr
@@ -33,12 +47,23 @@ from ..events.process import ProcessStdin
 from ..events.process import ProcessStdout
 from ..events.process import ShutdownProcess
 from ..events.process import SignalProcess
+from ..events.process import matches_action
 from ..launch_context import LaunchContext
 from ..launch_description import LaunchDescription
+from ..some_actions_type import SomeActionsType
 from ..some_substitutions_type import SomeSubstitutionsType
+from ..substitution import Substitution
+from ..substitutions import LaunchConfiguration
+from ..substitutions import PythonExpression
+from ..utilities import create_future
+from ..utilities import is_a_subclass
 from ..utilities import normalize_to_list_of_substitutions
+from ..utilities import perform_substitutions
 
 _logger = logging.getLogger(name='launch')
+
+_global_process_counter_lock = threading.Lock()
+_global_process_counter = 0  # in Python3, this number is unbounded (no rollover)
 
 
 class ExecuteProcess(Action):
@@ -50,7 +75,10 @@ class ExecuteProcess(Action):
         cwd: Optional[SomeSubstitutionsType] = None,
         env: Optional[Dict[SomeSubstitutionsType, SomeSubstitutionsType]] = None,
         shell: bool = False,
-    ):
+        sigterm_timeout: SomeSubstitutionsType = LaunchConfiguration('sigterm_timeout', default=5),
+        sigkill_timeout: SomeSubstitutionsType = LaunchConfiguration('sigkill_timeout', default=5),
+        prefix: Optional[SomeSubstitutionsType] = None,
+    ) -> None:
         """
         Construct an ExecuteProcess action.
 
@@ -75,6 +103,10 @@ class ExecuteProcess(Action):
 
           - passes the text provided by the event to the stdin of the process
 
+        - launch.events.Shutdown:
+
+          - same as ShutdownProcess
+
         Emitted events include:
 
         - launch.events.process.ProcessStarted:
@@ -97,107 +129,256 @@ class ExecuteProcess(Action):
         :param: cwd the directory in which to run the executable
         :param: env dictionary of environment variables to be used
         :param: shell if True, a shell is used to execute the cmd
+        :param: sigterm_timeout time until shutdown should escalate to SIGTERM
+        :param: sigkill_timeout time until escalating to SIGKILL after SIGTERM
+        :param: prefix a set of commands/arguments to preceed the cmd, used for
+            things like gdb/valgrind and defaults to the LaunchConfiguration
+            called 'launch-prefix'
         """
         super().__init__()
-        self.__cmd = normalize_to_list_of_substitutions(cmd)
+        self.__cmd = [normalize_to_list_of_substitutions(x) for x in cmd]
         self.__cwd = cwd if cwd is None else normalize_to_list_of_substitutions(cwd)
-        self.__env = None
+        self.__env: Optional[Dict[List[Substitution], List[Substitution]]] = None
         if env is not None:
             self.__env = {}
             for key, value in env.items():
                 self.__env[normalize_to_list_of_substitutions(key)] = \
                     normalize_to_list_of_substitutions(value)
         self.__shell = shell
-        self.__asyncio_task = None
-        self._final_cmd = None
-        self._final_cwd = None
-        self._final_env = None
+        self.__sigterm_timeout = normalize_to_list_of_substitutions(sigterm_timeout)
+        self.__sigkill_timeout = normalize_to_list_of_substitutions(sigkill_timeout)
+        self.__prefix = normalize_to_list_of_substitutions(
+            LaunchConfiguration('launch-prefix', default='') if prefix is None else prefix
+        )
+
+        self.__process_event_args: Optional[Dict[Text, Any]] = None
+        self._subprocess_protocol: Optional[Any] = None
+        self._subprocess_transport = None
+        self.__completed_future: Optional[asyncio.Future] = None
+        self.__sigterm_timer: Optional[TimerAction] = None
+        self.__sigkill_timer: Optional[TimerAction] = None
+        self.__shutdown_received = False
+
+    @property
+    def process_details(self):
+        """Getter for the process details, e.g. name, pid, cmd, etc., or None if not started yet."""
+        return self.__process_event_args
 
     def __on_shutdown_process_event(
         self,
-        event: ShutdownProcess,
+        event: Event,
         context: LaunchContext
     ) -> Optional[LaunchDescription]:
-        _logger.debug("in ExecuteProcess('{}').__on_shutdown_process_event()".format(id(self)))
+        _logger.warn("in ExecuteProcess('{}').__on_shutdown_process_event()".format(id(self)))
+        cast(ShutdownProcess, event)
+        return None
 
     def __on_signal_process_event(
         self,
-        event: SignalProcess,
+        event: Event,
         context: LaunchContext
     ) -> Optional[LaunchDescription]:
-        _logger.debug("in ExecuteProcess('{}').__on_signal_process_event()".format(id(self)))
+        typed_event = cast(SignalProcess, event)
+        if not typed_event.process_matcher(self):
+            # this event whas not intended for this process
+            return None
+        if self.process_details is None:
+            raise RuntimeError('Signal event received, before execution.')
+        if self._subprocess_transport is None:
+            raise RuntimeError('Signal event received, before subprocess transport available.')
+        if self._subprocess_protocol.complete.done():
+            # the process is done or is cleaning up, no need to signal
+            _logger.debug("signal '{}' not set to '{}' because it is already closing".format(
+                typed_event.signal_name, self.process_details['name']
+            ))
+            return None
+        _logger.info("sending signal '{}' to process[{}]".format(
+            typed_event.signal_name, self.process_details['name']
+        ))
+        self._subprocess_transport.send_signal(typed_event.signal)
+        return None
 
     def __on_process_stdin_event(
         self,
-        event: ProcessStdin,
+        event: Event,
         context: LaunchContext
     ) -> Optional[LaunchDescription]:
-        _logger.debug("in ExecuteProcess('{}').__on_process_stdin_event()".format(id(self)))
+        _logger.warn("in ExecuteProcess('{}').__on_process_stdin_event()".format(id(self)))
+        cast(ProcessStdin, event)
+        return None
+
+    def __on_shutdown(self, event: Event, context: LaunchContext) -> Optional[SomeActionsType]:
+        if self.__shutdown_received:
+            # Do not handle shutdown more than once.
+            return None
+        self.__shutdown_received = True
+        if self.__completed_future is None:
+            # Execution not started so nothing to do, but self.__shutdown_received should prevent
+            # execution from starting in the future.
+            return None
+        if self.__completed_future.done():
+            # If already done, then nothing to do.
+            return None
+        # Otherwise process is still running, start the shutdown procedures.
+        context.extend_locals({'process_name': self.process_details['name']})
+        actions_to_return = self.__get_shutdown_timer_actions()
+        if not cast(Shutdown, event).due_to_sigint:
+            actions_to_return.append(self.__get_sigint_event())
+        return actions_to_return
+
+    def __get_shutdown_timer_actions(self) -> List[Action]:
+        base_msg = 'process[{}] failed to terminate {} seconds after receiving {}, escalating to {}'
+
+        def printer(context, msg, timeout_substitutions):
+            _logger.error(msg.format(
+                context.locals.process_name,
+                perform_substitutions(context, timeout_substitutions),
+            ))
+
+        sigterm_timeout = self.__sigterm_timeout
+        sigkill_timeout = [PythonExpression(
+            ('float(', *self.__sigterm_timeout, ') + float(', *self.__sigkill_timeout, ')')
+        )]
+        # Setup a timer to send us a SIGTERM if we don't shutdown quickly.
+        self.__sigterm_timer = TimerAction(period=sigterm_timeout, actions=[
+            OpaqueFunction(
+                function=printer,
+                args=(base_msg.format('{}', '{}', 'SIGINT', 'SIGTERM'), sigterm_timeout)
+            ),
+            EmitEvent(event=SignalProcess(
+                signal_number=signal.SIGTERM,
+                process_matcher=matches_action(self)
+            )),
+        ])
+        # Setup a timer to send us a SIGKILL if we don't shutdown after SIGTERM.
+        self.__sigkill_timer = TimerAction(period=sigkill_timeout, actions=[
+            OpaqueFunction(
+                function=printer,
+                args=(base_msg.format('{}', '{}', 'SIGTERM', 'SIGKILL'), sigkill_timeout)
+            ),
+            EmitEvent(event=SignalProcess(
+                signal_number=signal.SIGKILL,
+                process_matcher=matches_action(self)
+            ))
+        ])
+        return [
+            cast(Action, self.__sigterm_timer),
+            cast(Action, self.__sigkill_timer),
+        ]
+
+    def __get_sigint_event(self):
+        return EmitEvent(event=SignalProcess(
+            signal_number=signal.SIGINT,
+            process_matcher=matches_action(self),
+        ))
+
+    def __cleanup(self):
+        # Cancel any pending timers we started.
+        if self.__sigterm_timer is not None:
+            self.__sigterm_timer.cancel()
+        if self.__sigkill_timer is not None:
+            self.__sigkill_timer.cancel()
+        # Signal that we're done to the launch system.
+        self.__completed_future.set_result(None)
 
     class __ProcessProtocol(AsyncSubprocessProtocol):
-        def __init__(self, action: 'ExecuteProcess', context: LaunchContext, **kwargs):
+        def __init__(
+            self,
+            action: 'ExecuteProcess',
+            context: LaunchContext,
+            process_event_args: Dict,
+            **kwargs
+        ) -> None:
             super().__init__(**kwargs)
             self.__context = context
             self.__action = action
+            self.__process_event_args = process_event_args
 
-        def on_stdout_received(self, data: Text) -> None:
-            self.__context.emit_event_sync(ProcessStdout(
-                action=self.__action,
-                cmd=self.__action._final_cmd,
-                cwd=self.__action._final_cwd,
-                env=self.__action._final_env,
-                text=data
+        def connection_made(self, transport):
+            _logger.info('process[{}]: started with pid [{}]'.format(
+                self.__process_event_args['name'],
+                transport.get_pid(),
             ))
+            super().connection_made(transport)
+            self.__process_event_args['pid'] = transport.get_pid()
+            self.__action._subprocess_transport = transport
 
-        def on_stderr_received(self, data: Text) -> None:
-            self.__context.emit_event_sync(ProcessStderr(
-                action=self.__action,
-                cmd=self.__action._final_cmd,
-                cwd=self.__action._final_cwd,
-                env=self.__action._final_env,
-                text=data
-            ))
+        def on_stdout_received(self, data: bytes) -> None:
+            self.__context.emit_event_sync(ProcessStdout(text=data, **self.__process_event_args))
 
-    async def __execute_process(self, context: LaunchContext) -> None:
-        _logger.debug("in ExecuteProcess('{}').__execute_process()".format(id(self)))
+        def on_stderr_received(self, data: bytes) -> None:
+            self.__context.emit_event_sync(ProcessStderr(text=data, **self.__process_event_args))
 
-        def __create_protocol(**kwargs) -> AsyncSubprocessProtocol:
-            return self.__ProcessProtocol(self, context, **kwargs)
-
-        self._final_cmd = [context.perform_substitution(x) for x in self.__cmd]
-        self._final_cwd = None
+    def __expand_substitutions(self, context):
+        # expand substitutions in arguments to async_execute_process()
+        cmd = [perform_substitutions(context, x) for x in self.__cmd]
+        name = os.path.basename(cmd[0])
+        cmd = shlex.split(perform_substitutions(context, self.__prefix)) + cmd
+        with _global_process_counter_lock:
+            global _global_process_counter
+            _global_process_counter += 1
+            name = '{}-{}'.format(name, _global_process_counter)
+        cwd = None
         if self.__cwd is not None:
-            self._final_cwd = ''.join([context.perform_substitution(x) for x in self.__cwd])
-        self._final_env = None
+            cwd = ''.join([context.perform_substitution(x) for x in self.__cwd])
+        env = None
         if self.__env is not None:
-            self._final_env = {}
+            env = {}
             for key, value in self.__env.items():
-                self._final_env[''.join([context.perform_substitution(x) for x in key])] = \
+                env[''.join([context.perform_substitution(x) for x in key])] = \
                     ''.join([context.perform_substitution(x) for x in value])
 
-        _logger.debug(
-            "in ExecuteProcess('{}').__execute_process(): '{}'".format(id(self), self._final_cmd)
-        )
-        transport, protocol = await async_execute_process(
-            __create_protocol,
-            cmd=self._final_cmd,
-            cwd=self._final_cwd,
-            env=self._final_env,
-            shell=self.__shell,
-            emulate_tty=False,
-            stderr_to_stdout=False,
-        )
+        # store packed kwargs for all ProcessEvent based events
+        self.__process_event_args = {
+            'action': self,
+            'name': name,
+            'cmd': cmd,
+            'cwd': cwd,
+            'env': env,
+            # pid is added to the dictionary in the connection_made() method of the protocol.
+        }
 
-        await context.emit_event(ProcessStarted(
-            action=self, cmd=self._final_cmd, cwd=self._final_cwd, env=self._final_env,
-        ))
+    async def __execute_process(self, context: LaunchContext) -> None:
+        process_event_args = self.__process_event_args
+        if process_event_args is None:
+            raise RuntimeError('process_event_args unexpectedly None')
+        name = process_event_args['name']
+        cmd = process_event_args['cmd']
+        cwd = process_event_args['cwd']
+        env = process_event_args['env']
+        try:
+            transport, self._subprocess_protocol = await async_execute_process(
+                lambda **kwargs: self.__ProcessProtocol(
+                    self, context, process_event_args, **kwargs
+                ),
+                cmd=cmd,
+                cwd=cwd,
+                env=env,
+                shell=self.__shell,
+                emulate_tty=False,
+                stderr_to_stdout=False,
+            )
+        except Exception:
+            _logger.error('exception occurred while executing process[{}]:\n{}'.format(
+                name,
+                traceback.format_exc()
+            ))
+            self.__cleanup()
+            return
 
-        returncode = await protocol.complete
-        await context.emit_event(ProcessExited(
-            action=self,
-            cmd=self._final_cmd, cwd=self._final_cwd, env=self._final_env,
-            returncode=returncode
-        ))
+        pid = transport.get_pid()
+
+        await context.emit_event(ProcessStarted(**process_event_args))
+
+        returncode = await self._subprocess_protocol.complete
+        if returncode == 0:
+            _logger.info('process[{}]: process has finished cleanly'.format(name, pid))
+        else:
+            _logger.error("process[{}] process has died [pid {}, exit code {}, cmd '{}'].".format(
+                name, pid, returncode, ' '.join(cmd)
+            ))
+        await context.emit_event(ProcessExited(returncode=returncode, **process_event_args))
+        self.__cleanup()
 
     def execute(self, context: LaunchContext) -> Optional[List['Action']]:
         """
@@ -209,20 +390,34 @@ class ExecuteProcess(Action):
         - register an event handler for the stdin event
         - create a task for the coroutine that monitors the process
         """
+        if self.__shutdown_received:
+            # If shutdown starts before execution can start, don't start execution.
+            return None
         from ..event_handlers import event_named
+        # TODO(wjwwood): unregister event handlers when that is possible
         context.register_event_handler(EventHandler(
             matcher=event_named('launch.events.ShutdownProcess'),
             handler=self.__on_shutdown_process_event
         ))
         context.register_event_handler(EventHandler(
-            matcher=event_named('launch.events.SignalProcess'),
+            matcher=lambda event: is_a_subclass(event, SignalProcess),
             handler=self.__on_signal_process_event
         ))
         context.register_event_handler(EventHandler(
             matcher=event_named('launch.events.ProcessStdin'),
             handler=self.__on_process_stdin_event
         ))
-        self.__asyncio_task = context.asyncio_loop.create_task(self.__execute_process(context))
+        context.register_event_handler(OnShutdown(
+            on_shutdown=self.__on_shutdown,
+        ))
+        self.__completed_future = create_future(context.asyncio_loop)
+        self.__expand_substitutions(context)
+        context.asyncio_loop.create_task(self.__execute_process(context))
+        return None
+
+    def get_asyncio_future(self) -> Optional[asyncio.Future]:
+        """Return an asyncio Future, used to let the launch system know when we're done."""
+        return self.__completed_future
 
     @property
     def cmd(self):

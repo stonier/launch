@@ -14,25 +14,33 @@
 
 """Module for OnProcessExit class."""
 
+import collections
 from typing import Callable
 from typing import List
 from typing import Optional
 from typing import Text
 from typing import Tuple
+from typing import cast
 from typing import overload
 
-from ..actions import ExecuteProcess
+from ..event import Event
 from ..event_handler import EventHandler
 from ..events.process import ProcessExited
+from ..launch_context import LaunchContext
 from ..launch_description_entity import LaunchDescriptionEntity
 from ..some_actions_type import SomeActionsType
+
+
+if False:
+    # imports here would cause loops, but are only used as forward-references for type-checking
+    from ..actions import ExecuteProcess  # noqa
 
 
 class OnProcessExit(EventHandler):
     """Convenience class for handling a process exited event."""
 
     @overload
-    def __init__(self, *, target_action: ExecuteProcess, on_exit: SomeActionsType):
+    def __init__(self, *, target_action: 'ExecuteProcess' = None, on_exit: SomeActionsType) -> None:
         """Overload which takes just actions."""
         ...
 
@@ -40,19 +48,25 @@ class OnProcessExit(EventHandler):
     def __init__(
         self,
         *,
-        target_action: ExecuteProcess,
+        target_action: 'ExecuteProcess' = None,
         on_exit: Callable[[int], Optional[SomeActionsType]]
-    ):
+    ) -> None:
         """Overload which takes a callable to handle the exit."""
         ...
 
-    def __init__(self, *, target_action, on_exit):  # noqa: F811
+    def __init__(self, *, target_action=None, on_exit) -> None:  # noqa: F811
         """Constructor."""
-        if not isinstance(target_action, ExecuteProcess):
+        from ..actions import ExecuteProcess  # noqa
+        if not isinstance(target_action, (ExecuteProcess, type(None))):
             raise RuntimeError("OnProcessExit requires an 'ExecuteProcess' action as the target")
         super().__init__(
             matcher=(
-                lambda event: isinstance(event, ProcessExited) and event.action == target_action
+                lambda event: (
+                    isinstance(event, ProcessExited) and (
+                        target_action is None or
+                        event.action == target_action
+                    )
+                )
             ),
             handler=None,  # noop
         )
@@ -60,24 +74,24 @@ class OnProcessExit(EventHandler):
         # TODO(wjwwood) check that it is not only callable, but also a callable that matches
         # the correct signature for a handler in this case
         self.__on_exit = on_exit
-        self.__actions_on_exit = []
+        self.__actions_on_exit: List[LaunchDescriptionEntity] = []
         if isinstance(on_exit, LaunchDescriptionEntity):
             self.__on_exit = lambda event, context: on_exit
-            if isinstance(on_exit, (list, tuple)):
+            if isinstance(on_exit, collections.Iterable):
                 self.__actions_on_exit = on_exit
             else:
                 self.__actions_on_exit = [on_exit]
 
-    def __call__(self, event: ProcessExited, context: 'LaunchContext') -> Optional[SomeActionsType]:
+    def handle(self, event: Event, context: LaunchContext) -> Optional[SomeActionsType]:
         """Handle the given event."""
-        return self.__on_exit(event, context)
+        return self.__on_exit(cast(ProcessExited, event), context)
 
     def describe(self) -> Tuple[Text, List[LaunchDescriptionEntity]]:
         """Return the description list with 0 being a string, and then LaunchDescriptionEntity's."""
-        return [
+        return (
             "OnProcessExit(matcher='{}', handler=<actions>)".format(self.matcher_description),
             self.__actions_on_exit,
-        ]
+        )
 
     @property
     def matcher_description(self):

@@ -14,6 +14,8 @@
 
 """Module for Shutdown event."""
 
+from typing import Text
+
 from ..event import Event
 
 
@@ -21,3 +23,18 @@ class Shutdown(Event):
     """Event that can be emitted during runtime of a launched system."""
 
     name = 'launch.events.Shutdown'
+
+    def __init__(self, *, reason: Text = 'reason not given', due_to_sigint: bool = False) -> None:
+        """Constructor."""
+        self.__reason = reason
+        self.__due_to_sigint = due_to_sigint
+
+    @property
+    def reason(self):
+        """Getter for reason."""
+        return self.__reason
+
+    @property
+    def due_to_sigint(self):
+        """Getter for due_to_sigint."""
+        return self.__due_to_sigint

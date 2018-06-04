@@ -20,6 +20,10 @@ from typing import Optional
 from .event import Event
 from .some_actions_type import SomeActionsType
 
+if False:
+    # imports here would cause loops, but are only used as forward-references for type-checking
+    from .launch_context import LaunchContext  # noqa
+
 
 class EventHandler:
     """Base class for event handlers, which handle events in the launch system."""
@@ -28,8 +32,8 @@ class EventHandler:
         self,
         *,
         matcher: Callable[[Event], bool],
-        handler: Callable[[Event, 'LaunchContext'], Optional[SomeActionsType]]
-    ):
+        handler: Optional[Callable[[Event, 'LaunchContext'], Optional[SomeActionsType]]]
+    ) -> None:
         """Constructor."""
         self.__matcher = matcher
         self.__handler = handler
@@ -38,6 +42,6 @@ class EventHandler:
         """Return True if the given event should be handled by this handler."""
         return self.__matcher(event)
 
-    def __call__(self, event: Event, context: 'LaunchContext') -> Optional[SomeActionsType]:
+    def handle(self, event: Event, context: 'LaunchContext') -> Optional[SomeActionsType]:
         """Handle the given event."""
         return self.__handler(event, context) if self.__handler is not None else None

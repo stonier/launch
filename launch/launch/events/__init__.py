@@ -17,9 +17,11 @@
 from . import process
 from .include_launch_description import IncludeLaunchDescription
 from .shutdown import Shutdown
+from .timer_event import TimerEvent
 
 __all__ = [
     'process',
     'IncludeLaunchDescription',
     'Shutdown',
+    'TimerEvent',
 ]

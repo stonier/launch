@@ -14,11 +14,6 @@
 
 """Module for ProcessStdout event."""
 
-from typing import Dict
-from typing import List
-from typing import Optional
-from typing import Text
-
 from .process_io import ProcessIO
 
 
@@ -27,22 +22,13 @@ class ProcessStdout(ProcessIO):
 
     name = 'launch.events.process.ProcessStdout'
 
-    def __init__(
-        self,
-        *,
-        action: 'launch.actions.ExecuteProcess',
-        cmd: List[Text],
-        cwd: Optional[Text],
-        env: Optional[Dict[Text, Text]],
-        text: bytes,
-    ):
+    def __init__(self, *, text: bytes, **kwargs):
         """
         Constructor.
 
-        :param: action is the ExecuteProcess action associated with the event
-        :param: cmd is the final command after substitution expansion
-        :param: cwd is the final working directory after substitution expansion
-        :param: env is the final environment variables after substitution expansion
+        Unmatched keyword arguments are passed to ProcessEvent, see it for
+        details on those arguments.
+
         :param: text is the unicode data associated with the event
         """
-        super().__init__(action=action, cmd=cmd, cwd=cwd, env=env, text=text, fd=1)
+        super().__init__(text=text, fd=1, **kwargs)

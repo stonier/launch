@@ -59,5 +59,5 @@ def get_signal_name(signal_number: int) -> Text:
         module_signal = getattr(signal, module_signal_name, None)
         return module_signal is not None and module_signal == signal_number
 
-    result = next(map(matches, signal_names))
-    return result if result is not None else str(signal_number)
+    first_name_matched = next(name for name in signal_names if matches(name))
+    return first_name_matched if first_name_matched is not None else str(signal_number)

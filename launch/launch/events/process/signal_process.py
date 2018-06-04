@@ -14,20 +14,37 @@
 
 """Module for SignalProcess event."""
 
-from .process_event import ProcessEvent
+from typing import Callable
+from typing import Optional
+from typing import Text
+
+from .process_targeted_event import ProcessTargetedEvent
 from ...utilities import get_signal_name
 
+if False:
+    # imports here would cause loops, but are only used as forward-references for type-checking
+    from ...actions import ExecuteProcess  # noqa
 
-class SignalProcess(ProcessEvent):
+
+class SignalProcess(ProcessTargetedEvent):
     """Event emitted when a signal should be sent to a process."""
 
     name = 'launch.events.process.SignalProcess'
 
-    def __init__(self, *, action: 'launch.actions.ExecuteProcess', signal_number: int):
-        """Constructor."""
-        super().__init__(action=action)
+    def __init__(
+        self, *,
+        signal_number: int,
+        process_matcher: Callable[['ExecuteProcess'], bool]
+    ) -> None:
+        """
+        Constructor.
+
+        Takes an optional process matcher, which can be used to match the
+        signal to a process.
+        """
+        super().__init__(process_matcher=process_matcher)
         self.__signal = signal_number
-        self.__signal_name = None  # evaluate lazily
+        self.__signal_name: Optional[Text] = None  # evaluate lazily
 
     @property
     def signal(self) -> int:
@@ -35,7 +52,7 @@ class SignalProcess(ProcessEvent):
         return self.__signal
 
     @property
-    def signal_name(self) -> int:
+    def signal_name(self) -> Text:
         """
         Getter for signal_name.
 

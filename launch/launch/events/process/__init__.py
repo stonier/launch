@@ -14,24 +14,34 @@
 
 """Package for launch.events.process."""
 
-from .process_event import ProcessEvent
 from .process_exited import ProcessExited
 from .process_io import ProcessIO
+from .process_matchers import matches_action
+from .process_matchers import matches_executable
+from .process_matchers import matches_name
+from .process_matchers import matches_pid
 from .process_started import ProcessStarted
 from .process_stderr import ProcessStderr
 from .process_stdin import ProcessStdin
 from .process_stdout import ProcessStdout
+from .process_targeted_event import ProcessTargetedEvent
+from .running_process_event import RunningProcessEvent
 from .shutdown_process import ShutdownProcess
 from .signal_process import SignalProcess
 
 __all__ = [
-    'ProcessEvent',
+    'matches_action',
+    'matches_executable',
+    'matches_name',
+    'matches_pid',
     'ProcessExited',
     'ProcessIO',
     'ProcessStarted',
     'ProcessStderr',
     'ProcessStdin',
     'ProcessStdout',
+    'ProcessTargetedEvent',
+    'RunningProcessEvent',
     'ShutdownProcess',
     'SignalProcess',
 ]

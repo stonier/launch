@@ -14,6 +14,7 @@
 
 """Module for the LogInfo action."""
 
+import logging
 from typing import List
 from typing import Optional
 from typing import Text
@@ -24,6 +25,8 @@ from ..action import Action
 from ..launch_context import LaunchContext
 from ..substitution import Substitution
 from ..utilities import normalize_to_list_of_substitutions
+
+_logger = logging.getLogger('launch.user')
 
 
 class LogInfo(Action):
@@ -52,4 +55,4 @@ class LogInfo(Action):
 
     def execute(self, context: LaunchContext) -> Optional[List[Action]]:
         """Execute the action."""
-        print(''.join([context.perform_substitution(sub) for sub in self.msg]))
+        _logger.info(''.join([context.perform_substitution(sub) for sub in self.msg]))

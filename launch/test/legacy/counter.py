@@ -46,6 +46,9 @@ def main(argv=sys.argv[1:]):
     if args.limit:
         signal.signal(signal.SIGINT, lambda signum, frame: print('ignoring SIGINT'))
 
+    signal.signal(signal.SIGINT, lambda signum, frame: print('ignoring SIGINT'))
+    signal.signal(signal.SIGTERM, lambda signum, frame: print('ignoring SIGTERM'))
+
     counter = 1
     while True:
         if args.limit is not None and counter > args.limit:

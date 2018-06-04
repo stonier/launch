@@ -14,40 +14,25 @@
 
 """Module for ProcessIO event."""
 
-from typing import Dict
-from typing import List
-from typing import Optional
-from typing import Text
-
-from .process_event import ProcessEvent
+from .running_process_event import RunningProcessEvent
 
 
-class ProcessIO(ProcessEvent):
+class ProcessIO(RunningProcessEvent):
     """Event emitted when a process generates output on stdout or stderr, or if stdin is used."""
 
     name = 'launch.events.process.ProcessIO'
 
-    def __init__(
-        self,
-        *,
-        action: 'launch.actions.ExecuteProcess',
-        cmd: List[Text],
-        cwd: Optional[Text],
-        env: Optional[Dict[Text, Text]],
-        text: bytes,
-        fd: int,
-    ):
+    def __init__(self, *, text: bytes, fd: int, **kwargs) -> None:
         """
         Constructor.
 
-        :param: action is the ExecuteProcess action associated with the event
-        :param: cmd is the final command after substitution expansion
-        :param: cwd is the final working directory after substitution expansion
-        :param: env is the final environment variables after substitution expansion
+        Unmatched keyword arguments are passed to RunningProcessEvent, see it
+        for details on those arguments.
+
         :param: text is the unicode data associated with the event
         :param: fd is an integer that indicates which file descriptor the text is from
         """
-        super().__init__(action=action, cmd=cmd, cwd=cwd, env=env)
+        super().__init__(**kwargs)
         self.__text = text
         self.__from_stdin = fd == 0
         self.__from_stdout = fd == 1

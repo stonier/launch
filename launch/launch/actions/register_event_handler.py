@@ -20,9 +20,19 @@ from ..launch_context import LaunchContext
 
 
 class RegisterEventHandler(Action):
-    """Action that registers an event handler."""
+    """
+    Action that registers an event handler.
 
-    def __init__(self, event_handler: EventHandler):
+    Event handlers which are registered in this action will not be matched
+    to an event which is in the process of being handled.
+    For example, if you have an event handler for event 'Foo' which returns
+    an instance of RegisterEventHandler for a new event handler that handles
+    the event 'Foo' as well, that event handler will not be matched with the
+    instance of the 'Foo' event which caused it to be registered in the first
+    place.
+    """
+
+    def __init__(self, event_handler: EventHandler) -> None:
         """Constructor."""
         super().__init__()
         self.__event_handler = event_handler

@@ -17,11 +17,12 @@
 import asyncio
 import collections
 import logging
+from typing import Any
+from typing import Dict
 from typing import Text
 
 from .event import Event
 from .event_handler import EventHandler
-from .launch_description_entity import LaunchDescriptionEntity
 from .substitution import Substitution
 
 _logger = logging.getLogger(name='launch')
@@ -32,61 +33,82 @@ class LaunchContext:
 
     def __init__(self):
         """Constructor."""
-        self.__event_queue = asyncio.Queue()
-        self.__event_handlers = collections.deque()
-        self.__async_event_handlers = collections.deque()
+        self._event_queue = asyncio.Queue()
+        self._event_handlers = collections.deque()
+        self._async_event_handlers = collections.deque()
+
+        self.__locals_stack = []
+        self.__locals = {}
+
+        self.__launch_configurations: Dict[Text, Text] = {}
+
         self.__asyncio_loop = None
 
     def _set_asyncio_loop(self, loop: asyncio.AbstractEventLoop) -> None:
         self.__asyncio_loop = loop
+
+    def _push_locals(self):
+        self.__locals_stack.append(dict(self.__locals))
+
+    def _pop_locals(self):
+        if not self.__locals_stack:
+            raise RuntimeError('locals stack unexpectedly empty')
+        self.__locals = self.__locals_stack.pop()
+
+    def extend_locals(self, extensions: Dict[Text, Any]) -> None:
+        """Extend the context.locals object with new members until popped."""
+        self.__locals.update(extensions)
+
+    def get_locals_as_dict(self) -> Dict[Text, Any]:
+        """Access the context locals as a dictionary."""
+        return self.__locals
+
+    @property
+    def launch_configurations(self) -> Dict[Text, Text]:
+        """Getter for launch_configurations dictionary."""
+        return self.__launch_configurations
+
+    @property
+    def locals(self):
+        """Getter for the locals."""
+        class AttributeDict:
+            def __init__(self, dict_in):
+                self.__dict = dict_in
+
+            def __getattr__(self, key):
+                if key not in self.__dict:
+                    raise RuntimeError(
+                        "context.locals does not contain attribute '{}', it contains: [{}]".format(
+                            key,
+                            ', '.join(self.__dict.keys())
+                        )
+                    )
+                return self.__dict[key]
+
+        return AttributeDict(self.__locals)
 
     @property
     def asyncio_loop(self):
         """Getter for asyncio_loop."""
         return self.__asyncio_loop
 
-    async def _process_one_event(self) -> None:
-        _logger.debug('in _process_one_event()')
-        next_event = await self.__event_queue.get()
-        _logger.debug("in _process_one_event() -> got event '{}'".format(next_event))
-        await self.__process_event(next_event)
-
-    async def __process_event(self, event: Event) -> None:
-        _logger.debug("processing event: '{}'".format(event.name))
-        for event_handler in tuple(self.__event_handlers):
-            if event_handler.matches(event):
-                _logger.debug(
-                    "processing event: '{}' ✓ '{}'".format(event.name, event_handler))
-                launch_description = event_handler(event, self)
-                if launch_description is not None:
-                    from .utilities import is_a_subclass
-                    if not is_a_subclass(launch_description, LaunchDescriptionEntity):
-                        raise RuntimeError(
-                            "expected a LaunchDescriptionEntity from event_handler, got '{}'"
-                            .format(launch_description)
-                        )
-                    launch_description.visit(self)
-            else:
-                _logger.debug(
-                    "processing event: '{}' x '{}'".format(event.name, event_handler))
-
     def register_event_handler(self, event_handler: EventHandler) -> None:
         """Register a synchronous event handler."""
-        self.__event_handlers.appendleft(event_handler)
+        self._event_handlers.appendleft(event_handler)
 
     def register_async_event_handler(self, event_handler: EventHandler) -> None:
         """Register a synchronous event handler."""
-        self.__async_event_handlers.appendleft(event_handler)
+        self._async_event_handlers.appendleft(event_handler)
 
     def emit_event_sync(self, event: Event) -> None:
         """Emit an event synchronously."""
         _logger.debug("emitting event synchronously: '{}'".format(event.name))
-        self.__event_queue.put_nowait(event)
+        self._event_queue.put_nowait(event)
 
     async def emit_event(self, event: Event) -> None:
         """Emit an event."""
         _logger.debug("emitting event: '{}'".format(event.name))
-        await self.__event_queue.put(event)
+        await self._event_queue.put(event)
 
     def perform_substitution(self, substitution: Substitution) -> Text:
         """Perform substitution on given Substitution."""

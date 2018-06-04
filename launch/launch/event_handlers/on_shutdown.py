@@ -37,7 +37,11 @@ class OnShutdown(EventHandler):
         ...
 
     @overload  # noqa: F811
-    def __init__(self, *, on_shutdown: Callable[[Shutdown], Optional[SomeActionsType]]):
+    def __init__(
+        self,
+        *,
+        on_shutdown: Callable[[Shutdown, 'LaunchContext'], Optional[SomeActionsType]]
+    ):
         """Overload which takes a callable to handle the shutdown."""
         ...
 
@@ -53,9 +57,9 @@ class OnShutdown(EventHandler):
         if not callable(on_shutdown):
             self.__on_shutdown = (lambda event, context: on_shutdown)
 
-    def __call__(self, event: Shutdown, context: 'LaunchContext') -> Optional[SomeActionsType]:
+    def handle(self, event: Shutdown, context: 'LaunchContext') -> Optional[SomeActionsType]:
         """Handle the given event."""
-        return self.__on_shutdown(event)
+        return self.__on_shutdown(event, context)
 
     def describe(self) -> Tuple[Text, List[LaunchDescriptionEntity]]:
         """Return the description list with 0 being a string, and then LaunchDescriptionEntity's."""

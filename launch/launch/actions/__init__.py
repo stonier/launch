@@ -17,11 +17,17 @@
 from .emit_event import EmitEvent
 from .execute_process import ExecuteProcess
 from .log_info import LogInfo
+from .opaque_function import OpaqueFunction
 from .register_event_handler import RegisterEventHandler
+from .set_launch_configuration import SetLaunchConfiguration
+from .timer_action import TimerAction
 
 __all__ = [
     'EmitEvent',
     'ExecuteProcess',
     'LogInfo',
+    'OpaqueFunction',
     'RegisterEventHandler',
+    'SetLaunchConfiguration',
+    'TimerAction',
 ]

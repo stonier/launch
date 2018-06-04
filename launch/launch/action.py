@@ -16,7 +16,9 @@
 
 from typing import List
 from typing import Optional
+from typing import Text
 
+from .launch_context import LaunchContext
 from .launch_description_entity import LaunchDescriptionEntity
 
 
@@ -28,17 +30,15 @@ class Action(LaunchDescriptionEntity):
     executed given a :class:`launch.LaunchContext` at runtime.
     """
 
-    # Note: LaunchContext is in a string to avoid needing to import and create a loop.
-    def visit(self, context: 'LaunchContext') -> Optional[List[LaunchDescriptionEntity]]:
-        """Override visit from LaunchDescriptionEntity so that it executes."""
-        return self.execute(context)
+    def describe(self) -> Text:
+        """Return a description of this Action."""
+        return self.__repr__()
 
-    # Note: Types that reference themselves in typing annotations have to be
-    # expressed as strings until Python 4.0 (?) where annotations will be
-    # postponed, see: https://www.python.org/dev/peps/pep-0563/
-    # In Python 3.7, there will be `from __future__ import annotations` to
-    # use the new behavior earlier.
-    def execute(self, context: 'LaunchContext') -> Optional[List['Action']]:
+    def visit(self, context: LaunchContext) -> Optional[List[LaunchDescriptionEntity]]:
+        """Override visit from LaunchDescriptionEntity so that it executes."""
+        return self.execute(context)  # type: ignore
+
+    def execute(self, context: LaunchContext) -> Optional[List['Action']]:
         """
         Execute the action.
 

@@ -41,22 +41,49 @@ def test_normal_case():
     # TODO(wjwwood): consider putting this as a convenience function of actions.ExecuteProcess
     ld.add_action(launch.actions.RegisterEventHandler(launch.event_handlers.OnProcessIO(
         target_action=whoami_action,
-        on_stdout=lambda text: launch.actions.LogInfo(
-            msg="whoami says you are '{}'.".format(text.decode().strip())
+        on_stdout=lambda event: launch.actions.LogInfo(
+            msg="whoami says you are '{}'.".format(event.text.decode().strip())
         ),
     )))
-    # TODO(wjwwood): consider putting this as a convenience function of actions.ExecuteProcess
+
+    # ld.add_action(launch.actions.SetLaunchConfiguration('launch-prefix', 'time'))
+
+    counter_action = launch.actions.ExecuteProcess(cmd=['python3', '-u', './legacy/counter.py'])
+    ld.add_action(counter_action)
+
+    def counter_output_handler(event):
+        target_str = 'Counter: 4'
+        if target_str in event.text.decode():
+            return launch.actions.EmitEvent(event=launch.events.Shutdown(
+                reason="saw '{}' from '{}'".format(target_str, event.process_name)
+            ))
+
+    ld.add_action(launch.actions.RegisterEventHandler(launch.event_handlers.OnProcessIO(
+        target_action=counter_action,
+        on_stdout=counter_output_handler,
+        on_stderr=counter_output_handler,
+    )))
+
+    def on_output(event):
+        for line in event.text.decode().splitlines():
+            print('({}) {}'.format(event.process_name, line))
+        # return launch.actions.LogInfo(msg='[{}] {}'.format(event.process_name, event.text))
+
+    ld.add_action(launch.actions.RegisterEventHandler(launch.event_handlers.OnProcessIO(
+        on_stdout=on_output,
+        on_stderr=on_output,
+    )))
     ld.add_action(launch.actions.RegisterEventHandler(launch.event_handlers.OnProcessExit(
-        target_action=whoami_action,
         on_exit=lambda event, context: LaunchDescription([
-            launch.actions.EmitEvent(event=launch.events.Shutdown()),
             launch.actions.LogInfo(
-                msg="'{}' exited with '{}'".format(event.cmd[0], event.returncode)
+                msg="'{}' exited with '{}'".format(event.process_name, event.returncode)
             ),
         ]),
     )))
     ld.add_action(launch.actions.RegisterEventHandler(launch.event_handlers.OnShutdown(
-        on_shutdown=lambda event: print('Launch was asked to shutdown!'),
+        on_shutdown=lambda event, context: launch.actions.LogInfo(
+            msg='Launch was asked to shutdown: {}'.format(event.reason)
+        ),
     )))
 
     print('Starting introspection of launch description...')
@@ -73,10 +100,7 @@ def test_normal_case():
     ls.include_launch_description(ld)
     ls.run()
     # next steps:
-    # - make execute process action
-
-    # questions:
-    # - should sync version of emit event call all handlers before returning?
+    # - Make use of describe_sub_entities in ExecuteProcess, other actions; also extend to EH's
 
 
 if __name__ == '__main__':

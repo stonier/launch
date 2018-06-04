@@ -14,19 +14,24 @@
 
 """Module for ShutdownProcess event."""
 
-from .process_event import ProcessEvent
+from typing import Callable
+
+from .process_targeted_event import ProcessTargetedEvent
 
 
-class ShutdownProcess(ProcessEvent):
+class ShutdownProcess(ProcessTargetedEvent):
     """
     Event emitted when a process should begin shutting down.
 
     This event is handled by the launch.actions.ExecuteProcess action, see it
     for details on what happens when this is emitted.
+
+    Also see ProcessTargetedEvent for details on how to target a specific
+    process.
     """
 
     name = 'launch.events.process.ShutdownProcess'
 
-    def __init__(self, *, action: 'launch.actions.ExecuteProcess'):
+    def __init__(self, *, process_matcher: Callable[['ExecuteProcess'], bool]):
         """Constructor."""
-        super().__init__(action=action)
+        super().__init__(process_matcher=process_matcher)

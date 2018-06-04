@@ -23,7 +23,7 @@ from ..utilities import is_a_subclass
 class EmitEvent(Action):
     """Action that emits an event when executed."""
 
-    def __init__(self, *, event: Event):
+    def __init__(self, *, event: Event) -> None:
         """Constructor."""
         super().__init__()
         if not is_a_subclass(event, Event):

@@ -19,13 +19,18 @@ from typing import List
 from typing import Optional
 from typing import Text
 from typing import Tuple
+from typing import cast
 
-from ..actions import ExecuteProcess
 from ..event import Event
 from ..event_handler import EventHandler
 from ..events.process import ProcessIO
+from ..launch_context import LaunchContext
 from ..launch_description_entity import LaunchDescriptionEntity
 from ..some_actions_type import SomeActionsType
+
+if False:
+    # imports here would cause loops, but are only used as forward-references for type-checking
+    from ..actions import ExecuteProcess  # noqa
 
 
 class OnProcessIO(EventHandler):
@@ -36,13 +41,14 @@ class OnProcessIO(EventHandler):
     def __init__(
         self,
         *,
-        target_action: ExecuteProcess,
-        on_stdin: Callable[[Text], Optional[SomeActionsType]] = None,
-        on_stdout: Callable[[Text], Optional[SomeActionsType]] = None,
-        on_stderr: Callable[[Text], Optional[SomeActionsType]] = None,
-    ):
+        target_action: Optional['ExecuteProcess'] = None,
+        on_stdin: Callable[[ProcessIO], Optional[SomeActionsType]] = None,
+        on_stdout: Callable[[ProcessIO], Optional[SomeActionsType]] = None,
+        on_stderr: Callable[[ProcessIO], Optional[SomeActionsType]] = None,
+    ) -> None:
         """Constructor."""
-        if not isinstance(target_action, ExecuteProcess):
+        from ..actions import ExecuteProcess  # noqa
+        if not isinstance(target_action, (ExecuteProcess, type(None))):
             raise RuntimeError("OnProcessIO requires an 'ExecuteProcess' action as the target")
         super().__init__(
             matcher=self._matcher,
@@ -56,33 +62,38 @@ class OnProcessIO(EventHandler):
     def _matcher(self, event: Event) -> bool:
         if not hasattr(event, '__class__'):
             raise RuntimeError("event '{}' unexpectedly not a class".format(event))
-        return issubclass(event.__class__, ProcessIO) and event.action == self.__target_action
+        return (
+            issubclass(event.__class__, ProcessIO) and (
+                self.__target_action is None or
+                cast(ProcessIO, event).action == self.__target_action
+            )
+        )
 
-    def __call__(self, event: ProcessIO, context: 'LaunchContext') -> Optional[SomeActionsType]:
+    def handle(self, event: Event, context: LaunchContext) -> Optional[SomeActionsType]:
         """Handle the given event."""
+        event = cast(ProcessIO, event)
         if event.from_stdout and self.__on_stdout is not None:
-            return self.__on_stdout(event.text)
+            return self.__on_stdout(event)
         elif event.from_stderr and self.__on_stderr is not None:
-            return self.__on_stderr(event.text)
+            return self.__on_stderr(event)
         elif event.from_stdin and self.__on_stdin is not None:
-            return self.__on_stdin(event.text)
-        else:
-            raise RuntimeError("Unexpected ProcessIO event where all 'from_*' are False.")
+            return self.__on_stdin(event)
+        return None
 
     def describe(self) -> Tuple[Text, List[LaunchDescriptionEntity]]:
         """Return the description list with 0 being a string, and then LaunchDescriptionEntity's."""
-        handlers = '{'
+        handlers = []
         if self.__on_stdin is not None:
-            handlers += "on_stdin: '{}'".format(self.__on_stdin)
+            handlers.append("on_stdin: '{}'".format(self.__on_stdin))
         if self.__on_stdout is not None:
-            handlers += "on_stdout: '{}'".format(self.__on_stdout)
+            handlers.append("on_stdout: '{}'".format(self.__on_stdout))
         if self.__on_stderr is not None:
-            handlers += "on_stderr: '{}'".format(self.__on_stderr)
-        handlers += '}'
-        return [
-            "OnProcessIO(matcher='{}', handlers={})".format(self.matcher_description, handlers),
+            handlers.append("on_stderr: '{}'".format(self.__on_stderr))
+        handlers_str = '{' + ', '.join(handlers) + '}'
+        return (
+            "OnProcessIO(matcher='{}', handlers={})".format(self.matcher_description, handlers_str),
             [],
-        ]
+        )
 
     @property
     def matcher_description(self):

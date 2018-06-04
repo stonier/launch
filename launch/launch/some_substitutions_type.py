@@ -14,13 +14,21 @@
 
 """Module for SomeSubstitutionsType type."""
 
+import collections
 from typing import Iterable
-from typing import NewType
 from typing import Text
 from typing import Union
 
-SomeSubstitutionsType = NewType('SomeSubstitutionsType', Union[
+from .substitution import Substitution
+
+SomeSubstitutionsType = Union[
     Text,
-    'Substitution',
-    Iterable[Union[Text, 'Substitution']],
-])
+    Substitution,
+    Iterable[Union[Text, Substitution]],
+]
+
+SomeSubstitutionsType_type = (
+    str,
+    Substitution,
+    collections.Iterable,
+)

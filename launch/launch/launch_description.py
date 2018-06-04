@@ -37,10 +37,7 @@ class LaunchDescription(LaunchDescriptionEntity):
 
     def visit(self, context: LaunchContext) -> Optional[List[LaunchDescriptionEntity]]:
         """Override visit from LaunchDescriptionEntity to visit contained entities."""
-        return [
-            ret for ret in map(lambda entity: entity.visit(context), self.__entities)
-            if ret is not None
-        ]
+        return self.__entities
 
     @property
     def entities(self) -> List[LaunchDescriptionEntity]:

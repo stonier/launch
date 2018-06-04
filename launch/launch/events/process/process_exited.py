@@ -14,15 +14,10 @@
 
 """Module for ProcessExited event."""
 
-from typing import Dict
-from typing import List
-from typing import Optional
-from typing import Text
-
-from .process_event import ProcessEvent
+from .running_process_event import RunningProcessEvent
 
 
-class ProcessExited(ProcessEvent):
+class ProcessExited(RunningProcessEvent):
     """Event emitted when a process exits."""
 
     name = 'launch.events.process.ProcessExited'
@@ -30,22 +25,18 @@ class ProcessExited(ProcessEvent):
     def __init__(
         self,
         *,
-        action: 'launch.actions.ExecuteProcess',
-        cmd: List[Text],
-        cwd: Optional[Text],
-        env: Optional[Dict[Text, Text]],
         returncode: int,
+        **kwargs
     ):
         """
         Constructor.
 
-        :param: action is the ExecuteProcess action associated with the event
-        :param: cmd is the final command after substitution expansion
-        :param: cwd is the final working directory after substitution expansion
-        :param: env is the final environment variables after substitution expansion
+        Unmatched keyword arguments are passed to RunningProcessEvent, see it
+        for details on those arguments.
+
         :param: returncode is the returncode of the process
         """
-        super().__init__(action=action, cmd=cmd, cwd=cwd, env=env)
+        super().__init__(**kwargs)
         self.__returncode = returncode
 
     @property
