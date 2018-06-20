@@ -17,8 +17,10 @@
 import asyncio
 import logging
 import os
+import platform
 import shlex
 import signal
+import subprocess
 import threading
 import traceback
 from typing import Any  # noqa: F401
@@ -246,6 +248,13 @@ class ExecuteProcess(Action):
         if typed_event.signal_name == 'SIGKILL':
             self._subprocess_transport.kill()  # works on both Windows and POSIX
             return None
+        if typed_event.signal_name == 'SIGINT' and platform.system() == 'Windows':
+            # SIGINT is not supported on Windows, but we should be able to emulate it with
+            # CTRL_C_EVENT.
+            # TODO(wjwwood): find out why this does not actually cause SIGINT in the child process
+            os.kill(self.__process_event_args['pid'], signal.CTRL_C_EVENT)
+            return None
+        # TODO(wjwwood): consider emulating SIGTERM with CTRL_BREAK_EVENT on Windows
         self._subprocess_transport.send_signal(typed_event.signal)
         return None
 
@@ -390,6 +399,10 @@ class ExecuteProcess(Action):
                 name, ', '.join(cmd), cwd, 'True' if env is not None else 'False'
             ))
         try:
+            extra_kwargs = {}
+            # if platform.system() == 'Windows':
+            #     # Prevent CTRL_C_EVENT and CTRL_BREAK_EVENT sent to children from affecting launch.
+            #     extra_kwargs['creationflags'] = subprocess.CREATE_NEW_PROCESS_GROUP  # type: ignore
             transport, self._subprocess_protocol = await async_execute_process(
                 lambda **kwargs: self.__ProcessProtocol(
                     self, context, process_event_args, **kwargs
@@ -400,6 +413,7 @@ class ExecuteProcess(Action):
                 shell=self.__shell,
                 emulate_tty=False,
                 stderr_to_stdout=(self.__output == 'screen'),
+                **extra_kwargs
             )
         except Exception:
             _logger.error('exception occurred while executing process[{}]:\n{}'.format(
