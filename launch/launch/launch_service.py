@@ -17,10 +17,12 @@
 import asyncio
 import atexit
 import collections
+import functools
 import logging
 import signal
 import threading
 import traceback
+from typing import cast
 from typing import Iterable
 from typing import List  # noqa: F401
 from typing import Optional
@@ -32,12 +34,15 @@ import osrf_pycommon.process_utils
 
 from .event import Event
 from .event_handlers import OnIncludeLaunchDescription
+from .event_handlers import OnProcessIO
 from .event_handlers import OnShutdown
 from .events import IncludeLaunchDescription
 from .events import Shutdown
+from .events.process import ProcessIO
 from .launch_context import LaunchContext
 from .launch_description import LaunchDescription
 from .launch_description_entity import LaunchDescriptionEntity
+from .launch_logger import LaunchLogger
 from .some_actions_type import SomeActionsType
 from .utilities import install_signal_handlers
 from .utilities import on_sigint
@@ -45,7 +50,6 @@ from .utilities import on_sigquit
 from .utilities import on_sigterm
 from .utilities import visit_all_entities_and_collect_futures
 
-_logger = logging.getLogger('launch.LaunchService')
 _g_loops_used = set()  # type: Set
 
 
@@ -81,27 +85,30 @@ class LaunchService:
         :param: argv stored in the context for access by the entities, None results in []
         :param: debug if True (not default), asyncio the logger are seutp for debug
         """
+        self.__debug = debug
+
+        # Setup logging
+        # TODO(jacobperron) check that this is the first place the logger is instantiated
+        # TODO(jacobperron): Expose log directory
+        self.__logger = LaunchLogger(level=logging.DEBUG if self.__debug else logging.INFO)
+
         # Install signal handlers if not already installed, will raise if not
         # in main-thread, call manually in main-thread to avoid this.
         install_signal_handlers()
 
         self.__argv = argv if argv is not None else []
 
-        # Setup logging and debugging.
-        logging.basicConfig(
-            level=logging.INFO,
-            format='[%(levelname)s] [%(name)s]: %(msg)s',
-        )
-        self.__debug = debug
-        if self.__debug:
-            logging.getLogger('launch').setLevel(logging.DEBUG)
-        else:
-            logging.getLogger('launch').setLevel(logging.INFO)
-
         # Setup context and register a built-in event handler for bootstrapping.
         self.__context = LaunchContext(argv=self.__argv)
         self.__context.register_event_handler(OnIncludeLaunchDescription())
         self.__context.register_event_handler(OnShutdown(on_shutdown=self.__on_shutdown))
+        # Add handler for output from processes.
+        self.__context.register_event_handler(OnProcessIO(
+            on_stdout=functools.partial(
+                self._on_process_output, file_name='stdout'),
+            on_stderr=functools.partial(
+                self._on_process_output, file_name='stderr'),
+        ))
 
         # Setup storage for state.
         self._entity_future_pairs = \
@@ -149,6 +156,13 @@ class LaunchService:
         """
         self.emit_event(IncludeLaunchDescription(launch_description))
 
+    def _on_process_output(self, event: Event, *, file_name: Text):
+        typed_event = cast(ProcessIO, event)
+        text = typed_event.text.decode()
+        # TODO(jacobperron): Select between logging debug/info/error
+        for line in text.splitlines():
+            self.__logger.info(typed_event.process_name, line)
+
     def _prune_and_count_entity_future_pairs(self):
         needs_prune = False
         for pair in self._entity_future_pairs:
@@ -179,11 +193,13 @@ class LaunchService:
         await self.__process_event(next_event)
 
     async def __process_event(self, event: Event) -> None:
-        _logger.debug("processing event: '{}'".format(event))
+        self.__logger.debug('launch.LaunchService', "processing event: '{}'".format(event))
         for event_handler in tuple(self.__context._event_handlers):
             if event_handler.matches(event):
-                _logger.debug(
-                    "processing event: '{}' ✓ '{}'".format(event, event_handler))
+                self.__logger.debug(
+                    'launch.LaunchService',
+                    "processing event: '{}' ✓ '{}'".format(event, event_handler),
+                )
                 self.__context._push_locals()
                 entities = event_handler.handle(event, self.__context)
                 entities = entities if isinstance(entities, collections.Iterable) else (entities,)
@@ -200,7 +216,8 @@ class LaunchService:
             else:
                 pass
                 # Keep this commented for now, since it's very chatty.
-                # _logger.debug(
+                # self.__logger.debug(
+                #     'launch.LaunchService',
                 #     "processing event: '{}' x '{}'".format(event, event_handler))
 
     async def __run_loop(self) -> None:
@@ -231,7 +248,10 @@ class LaunchService:
                             timeout=1.0,
                             return_when=asyncio.FIRST_COMPLETED)
                         if not done:
-                            _logger.debug('still waiting on futures: {}'.format(entity_futures))
+                            self.__logger.debug(
+                                'launch.LaunchService',
+                                'still waiting on futures: {}'.format(entity_futures),
+                            )
             else:
                 await process_one_event_task
 
@@ -296,11 +316,14 @@ class LaunchService:
                 nonlocal sigint_received
                 base_msg = 'user interrupted with ctrl-c (SIGINT)'
                 if not sigint_received:
-                    _logger.warn(base_msg)
+                    self.__logger.warning('launch.LaunchService', base_msg)
                     self._shutdown(reason='ctrl-c (SIGINT)', due_to_sigint=True)
                     sigint_received = True
                 else:
-                    _logger.warn('{} again, ignoring...'.format(base_msg))
+                    self.__logger.warning(
+                        'launch.LaunchService',
+                        '{} again, ignoring...'.format(base_msg),
+                    )
 
                 signal.signal(signal.SIGINT, prev_handler)
 
@@ -312,8 +335,14 @@ class LaunchService:
                     return
 
                 # TODO(wjwwood): try to terminate running subprocesses before exiting.
-                _logger.error('using SIGTERM or SIGQUIT can result in orphaned processes')
-                _logger.error('make sure no processes launched are still running')
+                self.__logger.error(
+                    'launch.LaunchService',
+                    'using SIGTERM or SIGQUIT can result in orphaned processes',
+                )
+                self.__logger.error(
+                    'launch.LaunchService',
+                    'make sure no processes launched are still running',
+                )
                 nonlocal run_loop_task
                 self.__loop_from_run_thread.call_soon_threadsafe(run_loop_task.cancel)
 
@@ -326,7 +355,10 @@ class LaunchService:
                     # This function has been called re-entrantly.
                     return
 
-                _logger.error('user interrupted with ctrl-\\ (SIGQUIT), terminating...')
+                self.__logger.error(
+                    'launch.LaunchService',
+                    'user interrupted with ctrl-\\ (SIGQUIT), terminating...',
+                )
                 _on_sigterm(signum, frame)
 
                 signal.signal(signal.SIGQUIT, prev_handler)
@@ -341,11 +373,11 @@ class LaunchService:
                 except KeyboardInterrupt:
                     pass
                 except asyncio.CancelledError:
-                    _logger.error('asyncio run loop was canceled')
+                    self.__logger.error('launch.LaunchService', 'asyncio run loop was canceled')
                 except Exception as exc:
                     msg = 'Caught exception in launch (see debug for traceback): {}'.format(exc)
-                    _logger.debug(traceback.format_exc())
-                    _logger.error(msg)
+                    self.__logger.debug('launch.LaunchService', traceback.format_exc())
+                    self.__logger.error('launch.LaunchService', msg)
                     self.__return_code = 1
                     self._shutdown(reason=msg, due_to_sigint=False)
                     # restart run loop to let it shutdown properly
@@ -361,6 +393,9 @@ class LaunchService:
             on_sigint(None)
             on_sigterm(None)
             on_sigquit(None)
+
+            # Flush the logging buffer
+            self.__logger.shutdown()
 
             with self.__running_lock:
                 self.__running = False
