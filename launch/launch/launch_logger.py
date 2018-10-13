@@ -51,29 +51,45 @@ class LaunchLogger:
 
     class __LaunchLogger:
 
-        def __init__(self, *, level, log_dir):
+        def __init__(self, *, level, log_dir, screen_timestamps=False):
             # Set the default verbosity level.
             logging.root.setLevel(level)
 
-            # Generate log filename
-            # TODO(jacobperron): Check if filename already exists.
-            #                    If so, either add counter or try generating datetime string again
-            datetime_str = datetime.datetime.now().strftime('%Y-%m-%d-%H-%M-%S-%f')
-            log_basename = '{0}-{1}-{2}.log'.format(
-                datetime_str,
-                socket.gethostname(),
-                os.getpid(),
-            )
-            self.__log_filename = os.path.join(log_dir, log_basename)
-            # Make sure directory exists
-            os.makedirs(os.path.dirname(self.__log_filename), exist_ok=True)
-
-            # Establish log format
+            # Establish formats for log file, screen, and subprocesses
             # TODO(jacobperron): Add fixed padding to 'created' time
-            self.__formatter = logging.Formatter(
-                '{created} [{levelname}] [{name}] {msg}',
+            screen_timestamp_format = '{created} ' if screen_timestamps else ''
+            self.__log_formatter = logging.Formatter(
+                '{created} [{levelname}] [{name}]: {msg}',
                 style='{',
             )
+            self.__screen_formatter = logging.Formatter(
+                '{}[{levelname}] [{name}]: {msg}'.format(screen_timestamp_format),
+                style='{',
+            )
+            self.__subprocess_log_formatter = logging.Formatter(
+                '{created} [{name}]: {msg}',
+                style='{',
+            )
+            self.__subprocess_screen_formatter = logging.Formatter(
+                '{}[{name}]: {msg}'.format(screen_timestamp_format),
+                style='{',
+            )
+
+            # Generate log filename
+            while True:
+                datetime_str = datetime.datetime.now().strftime('%Y-%m-%d-%H-%M-%S-%f')
+                log_basename = '{0}-{1}-{2}.log'.format(
+                    datetime_str,
+                    socket.gethostname(),
+                    os.getpid(),
+                )
+                self.__log_filename = os.path.join(log_dir, log_basename)
+                # Check that filename does not exist
+                if not os.path.isfile(self.__log_filename):
+                    break
+
+            # Make sure directory exists
+            os.makedirs(os.path.dirname(self.__log_filename), exist_ok=True)
 
             # Create handlers for the log file and screen
             # Use a 'WatchedFileHandler' in case file is modified (e.g. moved or removed)
@@ -84,13 +100,7 @@ class LaunchLogger:
                 self.file_handler = logging.FileHandler(self.__log_filename)
             # TODO(jacobperron): Add a filter to the file handler for stripping
             #                    color escape sequences
-            self.file_handler.setFormatter(self.__formatter)
-            # TODO(jacobperron): Support streaming to stderr, maybe with Filters?
-            self.stdout_handler = logging.StreamHandler(sys.stdout)
-            # self.__stderr_handler = logging.StreamHandler(sys.stderr)
-            self.stdout_handler.setFormatter(self.__formatter)
-            # self.__stderr_handler.setFormatter(self.__formatter)
-
+            
         def configure_logger(self, name: Text, output: Text = 'log', level: Optional[int] = None):
             """
             Configure the output and verbosity level for a process by name.
@@ -114,6 +124,14 @@ class LaunchLogger:
 
             if level is not None:
                 logger.setLevel(level)
+
+            # TODO: Select which formatter to apply to the handler
+            self.file_handler.setFormatter(self.__formatter)
+            self.stdout_handler = logging.StreamHandler(sys.stdout)
+            self.stdout_handler.setFormatter(self.__formatter)
+            # TODO(jacobperron): Support streaming to stderr, maybe with Filters?
+            # self.__stderr_handler = logging.StreamHandler(sys.stderr)
+            # self.__stderr_handler.setFormatter(self.__formatter)
 
             # Avoid adding handlers more than once
             if (self.file_handler not in logger.handlers and
@@ -175,7 +193,8 @@ class LaunchLogger:
         self,
         *,
         level: int = logging.INFO,
-        log_dir: Text = os.path.join(os.path.expanduser('~'), '.ros/log')
+        log_dir: Text = os.path.join(os.path.expanduser('~'), '.ros/log'),
+        screen_timestamps: bool = False,
     ):
         """
         Constructor.
@@ -184,9 +203,15 @@ class LaunchLogger:
             multiple calls to this constructor.
         :param: log_dir is where the launch log file will be created. The log directory can only
             be set once with the first call to this constructor.
+        :param: screen_timestamps is a flag that if set to True, will prepend timestamps to log
+            messages sent to the screen.
         """
         if LaunchLogger.instance is None:
-            LaunchLogger.instance = LaunchLogger.__LaunchLogger(level=level, log_dir=log_dir)
+            LaunchLogger.instance = LaunchLogger.__LaunchLogger(
+                level=level,
+                log_dir=log_dir,
+                screen_timestamps=screen_timestamps,
+            )
         else:
             logging.root.setLevel(level)
 
