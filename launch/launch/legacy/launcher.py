@@ -185,6 +185,7 @@ class DefaultLauncher:
                     else:
                         result = future.result()
                         p.task_state.returncode = result
+                    print("(DEBUG) future done with code {}".format(p.task_state.returncode))
                     self._process_message(p, 'rc ' + str(p.task_state.returncode))
 
                 # close transport
@@ -311,6 +312,7 @@ class DefaultLauncher:
                             p.task_state.returncode = result
                     except asyncio.CancelledError:
                         p.task_state.returncode = 0
+                    print("(DEBUG) exit handler with code {}".format(p.task_state.returncode))
                     self._process_message(p, 'rc ' + str(p.task_state.returncode))
 
                 context = ExitHandlerContext(launch_state, p.task_state)
@@ -378,6 +380,7 @@ class DefaultLauncher:
         p = process_descriptor
         p.transport.close()
         p.task_state.returncode = p.transport.get_returncode()
+        print("(DEBUG) close process with code {}".format(p.task_state.returncode))
         self._process_message(p, 'rc ' + str(p.task_state.returncode))
         p.output_handler.process_cleanup()
 
