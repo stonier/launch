@@ -22,6 +22,7 @@ import unittest
 from datetime import timedelta
 
 from apex_rostest import post_shutdown_test
+from apex_rostest.asserts import assertExitCodes
 
 from launch.launch_description_sources import \
     get_launch_description_from_python_launch_file
@@ -61,12 +62,7 @@ def generate_test_description(ready_fn) -> LaunchDescription:
 class OutcomeTest(unittest.TestCase):
 
     def test_return_codes(self):
-        for info in self.proc_info:
-            self.assertEquals(
-                info.returncode,
-                0,
-                "Non-zero exit code for process {}".format(info.process_name)
-            )
+        assertExitCodes(self.proc_info)
 
 
 def generate_test_description(ready_fn) -> LaunchDescription:
