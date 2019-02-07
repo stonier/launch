@@ -24,6 +24,7 @@ from launch.event_handlers import OnProcessIO
 from launch.events import Shutdown
 
 from . import actions
+from .output import create_output_check
 
 __all__ = [
     'actions',
